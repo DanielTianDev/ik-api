@@ -102,7 +102,7 @@ async def historical_stock_custom(
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
         ib = IB()
-        ib.connect('127.0.0.1', 4002, clientId=2)
+        ib.connect(IB_HOST, IB_PORT, clientId=2)
         contract = Stock(symbol.upper(), 'SMART', 'USD')
         
         # Convert date format from YYYY-MM-DD to YYYYMMDD 00:00:00
