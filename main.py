@@ -90,6 +90,14 @@ async def get_earliest_data(symbol: str = Path(...)):
 
     return JSONResponse(await run_in_threadpool(fetch))
 
+@app.get("/add")
+async def add_numbers(a: float = Query(...), b: float = Query(...)):
+    """
+    Test endpoint that adds two numbers.
+    Example: /add?a=5&b=7 returns {"result": 12}
+    """
+    return {"result": a + b}
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("test:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)

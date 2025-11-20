@@ -5,7 +5,13 @@ from contextlib import contextmanager
 from typing import Iterable, List, Optional
 from datetime import datetime
 from ib_insync import IB, Stock, Contract, BarDataList, Order, Trade
+import logging
 
+logger = logging.getLogger(__name__)
+
+class IBKRConnectionError(Exception):
+    """Raised when unable to connect to IBKR."""
+    pass
 
 class IBKRClient:
     """Thin wrapper around ib_insync with shared connection + helpers."""
@@ -26,11 +32,15 @@ class IBKRClient:
     def connection(self) -> Iterable[IB]:
         self._ensure_loop()
         ib = IB()
-        ib.connect(self.host, self.port, clientId=self.client_id)
         try:
+            ib.connect(self.host, self.port, clientId=self.client_id)
             yield ib
+        except Exception as e:
+            logger.error(f"Failed to connect to IBKR: {e}")
+            raise IBKRConnectionError(f"Unable to connect to IBKR at {self.host}:{self.port}") from e
         finally:
-            ib.disconnect()
+            if ib.isConnected():
+                ib.disconnect()
 
     def get_realtime_price(self, symbol: str, market_data_type: int = 3) -> float:
         with self.connection() as ib:
@@ -78,3 +88,5 @@ class IBKRClient:
         with self.connection() as ib:
             contract = Stock(symbol.upper(), "SMART", "USD")
             return ib.reqHeadTimeStamp(contract, whatToShow=what_to_show, useRTH=True)
+        
+    
