@@ -90,6 +90,35 @@ async def get_earliest_data(symbol: str = Path(...)):
 
     return JSONResponse(await run_in_threadpool(fetch))
 
+
+@app.get("/historical_stock_graph/{symbol}")
+async def historical_stock_graph(
+    symbol: str = Path(..., description="Stock symbol"),
+    duration: str = Query("1 M", description="Duration string (e.g., '1 M', '1 Y')"),
+    bar_size: str = Query("1 day", description="Bar size string (e.g., '1 day', '1 hour')")
+):
+    """
+    Generates and returns a PNG graph of historical stock data.
+    """
+    def generate_and_get_path():
+        # This synchronous function calls the method on the client
+        return ib_client.generate_historical_graph(
+            symbol=symbol,
+            duration=duration,
+            bar_size=bar_size
+        )
+
+    # Run the blocking I/O operation in a thread pool
+    file_path = await run_in_threadpool(generate_and_get_path)
+
+    if not file_path or not os.path.exists(file_path):
+        return JSONResponse(
+            status_code=404,
+            content={"message": f"Could not generate graph for {symbol}. No data found."}
+        )
+
+    return FileResponse(file_path, media_type="image/png")
+
 @app.get("/add")
 async def add_numbers(a: float = Query(...), b: float = Query(...)):
     """

@@ -6,6 +6,8 @@ from typing import Iterable, List, Optional
 from datetime import datetime
 from ib_insync import IB, Stock, Contract, BarDataList, Order, Trade
 import logging
+import matplotlib.pyplot as plt
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -89,4 +91,56 @@ class IBKRClient:
             contract = Stock(symbol.upper(), "SMART", "USD")
             return ib.reqHeadTimeStamp(contract, whatToShow=what_to_show, useRTH=True)
         
-    
+
+    def generate_historical_graph(
+        self,
+        symbol: str,
+        duration: str = "1 M",
+        bar_size: str = "1 day",
+        output_dir: str = "graphs",
+    ) -> Optional[str]:
+        """
+        Fetches historical data and generates a graph, saving it as a PNG file.
+
+        Args:
+            symbol: The stock symbol.
+            duration: The duration to fetch data for (e.g., '1 M', '1 Y').
+            bar_size: The bar size for the data (e.g., '1 day', '1 hour').
+            output_dir: The directory to save the graph in.
+
+        Returns:
+            The file path of the generated graph, or None if no data was found.
+        """
+        bars = self.get_historical_data(
+            symbol=symbol,
+            duration=duration,
+            bar_size=bar_size,
+            what_to_show="TRADES",
+        )
+
+        if not bars:
+            logger.warning(f"No historical data found for {symbol}")
+            return None
+
+        dates = [bar.date for bar in bars]
+        closes = [bar.close for bar in bars]
+
+        plt.figure(figsize=(10, 5))
+        plt.plot(dates, closes, marker="o")
+        plt.title(f"{symbol.upper()} Historical Close Prices ({duration})")
+        plt.xlabel("Date")
+        plt.ylabel("Close Price")
+        plt.xticks(rotation=45)
+        plt.grid(True)
+        plt.tight_layout()
+
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+
+        filename = f"{symbol.lower()}_{duration.replace(' ', '')}_{bar_size.replace(' ', '')}_historical.png"
+        filepath = os.path.join(output_dir, filename)
+        plt.savefig(filepath)
+        plt.close()
+
+        logger.info(f"Generated historical graph for {symbol} at {filepath}")
+        return filepath
