@@ -18,7 +18,8 @@ IB_PORT = 4002  # 4001 for live trading, 4002 for paper trading
 IB_HOST = '127.0.0.1'
 USE_MOCK = os.getenv('USE_MOCK', 'false').lower() == 'true'
 app = FastAPI()
-ib_client = IBKRClient(host=IB_HOST, port=IB_PORT, client_id=1)
+# Set rate_limit_delay to 0.1 seconds (10 requests/sec for CP Gateway, or 0.02 for 50 req/sec)
+ib_client = IBKRClient(host=IB_HOST, port=IB_PORT, client_id=1, rate_limit_delay=0.1)
 
 app.add_middleware(
     CORSMiddleware,
@@ -118,6 +119,42 @@ async def historical_stock_graph(
         )
 
     return FileResponse(file_path, media_type="image/png")
+
+
+
+@app.get("/swing_simulation/{symbol}")
+async def swing_simulation(
+    symbol: str = Path(..., description="Stock symbol"),
+    duration: str = Query("1 Y", description="Duration string (e.g., '1 Y', '6 M')"),
+    bar_size: str = Query("1 day", description="Bar size string (e.g., '1 day')"),
+    short_ma: int = Query(10, description="Short moving average period"),
+    long_ma: int = Query(30, description="Long moving average period")
+):
+    """
+    Generates and returns a PNG graph of swing trade simulation.
+    Uses only first 50% of historical data for backtesting.
+    """
+    def generate_simulation():
+        return ib_client.simulate_swing_trade(
+            symbol=symbol,
+            duration=duration,
+            bar_size=bar_size,
+            short_ma=short_ma,
+            long_ma=long_ma
+        )
+
+    # Run the simulation in a thread pool (since it involves I/O and calculations)
+    file_path = await run_in_threadpool(generate_simulation)
+
+    if not file_path or not os.path.exists(file_path):
+        return JSONResponse(
+            status_code=404,
+            content={"message": f"Could not generate swing simulation for {symbol}. No data found."}
+        )
+
+    return FileResponse(file_path, media_type="image/png")
+
+
 
 @app.get("/add")
 async def add_numbers(a: float = Query(...), b: float = Query(...)):
