@@ -1,13 +1,19 @@
 import asyncio
-from fastapi import Path
+import os
+from fastapi import Path, Query
 from ib_insync import IB, Stock, MarketOrder
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 import matplotlib.pyplot as plt
 from datetime import datetime
+from mock_data import MockIBKRService
 
+IB_PORT = 4002  # 4001 for live trading, 4002 for paper trading
+IB_HOST = '127.0.0.1'
+USE_MOCK = os.getenv('USE_MOCK', 'false').lower() == 'true'
 app = FastAPI()
 
 app.add_middleware(
@@ -26,7 +32,7 @@ def get_ibkr_data():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     ib = IB()   
-    ib.connect('127.0.0.1', 4002, clientId=1)
+    ib.connect(IB_HOST, IB_PORT, clientId=1) #4001 is for paper trading, 4002 for live trading
     connected = ib.isConnected()
     ib.reqMarketDataType(3)
 
@@ -43,11 +49,15 @@ def get_ibkr_data():
 
 @app.get("/hello_ibkr")
 async def hello_ibkr_endpoint():
+    if USE_MOCK:
+        return JSONResponse(MockIBKRService.get_mock_ticker_data('VFV'))
     result = await run_in_threadpool(get_ibkr_data)
     return JSONResponse(result)
 
 @app.get("/historical_stock/{symbol}")
 async def historical_stock(symbol: str = Path(..., description="Stock symbol")):
+    if USE_MOCK:
+        return JSONResponse(MockIBKRService.get_mock_historical_data(symbol))
     def get_historical():
         try:
             asyncio.get_running_loop()
@@ -55,7 +65,7 @@ async def historical_stock(symbol: str = Path(..., description="Stock symbol")):
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
         ib = IB()
-        ib.connect('127.0.0.1', 4002, clientId=2)
+        ib.connect(IB_HOST, IB_PORT, clientId=2)
         contract = Stock(symbol.upper(), 'SMART', 'USD')
         end_date = ''
         bars = ib.reqHistoricalData(
@@ -84,6 +94,147 @@ async def historical_stock(symbol: str = Path(..., description="Stock symbol")):
     result = await run_in_threadpool(get_historical)
     return JSONResponse(result)
 
+
+@app.get("/historical_stock_graph2/{symbol}")
+async def historical_stock_graph(symbol: str = Path(..., description="Stock symbol")):
+    # Call the existing historical_stock logic to get data
+    def get_historical():
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        ib = IB()
+        ib.connect(IB_HOST, IB_PORT, clientId=2)
+        contract = Stock(symbol.upper(), 'SMART', 'USD')
+        end_date = ''
+        bars = ib.reqHistoricalData(
+            contract,
+            endDateTime=end_date,
+            durationStr='1 M',
+            barSizeSetting='1 day',
+            whatToShow='TRADES',
+            useRTH=True,
+            formatDate=1
+        )
+        ib.disconnect()
+        data = [
+            {
+                "date": bar.date.strftime('%Y-%m-%d'),
+                "close": bar.close
+            }
+            for bar in bars
+        ]
+        return data
+
+    data = await run_in_threadpool(get_historical)
+
+    dates = [item["date"] for item in data]
+    closes = [item["close"] for item in data]
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(dates, closes, marker='o')
+    plt.title(f"{symbol.upper()} Historical Close Prices")
+    plt.xlabel("Date")
+    plt.ylabel("Close Price")
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    filename = f"{symbol}_historical.png"
+    plt.savefig(filename)
+    plt.close()
+
+    return FileResponse(filename, media_type="image/png", filename=filename)
+
+
+@app.get("/historical_stock_custom/")
+async def historical_stock_custom(
+    symbol: str = Query(..., description="Stock symbol"),
+    end_date: str = Query('', description="End date (format: YYYY-MM-DD, empty for now)"),
+    duration_str: str = Query('1 M', description="Duration string (e.g., '1 D', '1 W', '1 M', '1 Y')"),
+    bar_size_setting: str = Query('1 day', description="Bar size (e.g., '1 min', '5 mins', '1 hour', '1 day')"),
+    what_to_show: str = Query('TRADES', description="What to show (e.g., 'TRADES', 'MIDPOINT', 'BID', 'ASK', etc.)")
+):
+    if USE_MOCK:
+        return JSONResponse(MockIBKRService.get_mock_historical_data(symbol))
+    def get_historical():
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        ib = IB()
+        ib.connect(IB_HOST, IB_PORT, clientId=2)
+        contract = Stock(symbol.upper(), 'SMART', 'USD')
+        
+        # Convert date format from YYYY-MM-DD to YYYYMMDD 00:00:00
+        formatted_end_date = ''
+        if end_date:
+            try:
+                # Parse the input date and format it for IBKR
+                date_obj = datetime.strptime(end_date, '%Y-%m-%d')
+                formatted_end_date = date_obj.strftime('%Y%m%d 00:00:00')
+            except ValueError:
+                # If date parsing fails, use empty string (current time)
+                formatted_end_date = ''
+        
+        bars = ib.reqHistoricalData(
+            contract,
+            endDateTime=formatted_end_date,
+            durationStr=duration_str,
+            barSizeSetting=bar_size_setting,
+            whatToShow=what_to_show,
+            useRTH=True,
+            formatDate=1
+        )
+        ib.disconnect()
+        data = [
+            {
+                "date": bar.date.strftime('%Y-%m-%d'),
+                "open": bar.open,
+                "high": bar.high,
+                "low": bar.low,
+                "close": bar.close,
+                "volume": bar.volume
+            }
+            for bar in bars
+        ]
+        return data
+
+    result = await run_in_threadpool(get_historical)
+    return JSONResponse(result)
+
+@app.get("/earliest_data/{symbol}")
+async def get_earliest_data(symbol: str = Path(..., description="Stock symbol")):
+    if USE_MOCK:
+        return JSONResponse(MockIBKRService.get_mock_earliest_data(symbol))
+    def get_earliest():
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        ib = IB()
+        ib.connect(IB_HOST, IB_PORT, clientId=4)
+        contract = Stock(symbol.upper(), 'SMART', 'USD')
+        
+        # Get the earliest available timestamp
+        head_timestamp = ib.reqHeadTimeStamp(
+            contract,
+            whatToShow='TRADES',
+            useRTH=True,
+            formatDate=1
+        )
+        
+        ib.disconnect()
+        
+        return {
+            "symbol": symbol.upper(),
+            "earliest_data_date": head_timestamp.strftime('%Y-%m-%d') if head_timestamp else None
+        }
+
+    result = await run_in_threadpool(get_earliest)
+    return JSONResponse(result)
+
 def execute_swing_trade():
     try:
         asyncio.get_running_loop()
@@ -91,7 +242,7 @@ def execute_swing_trade():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     ib = IB()
-    ib.connect('127.0.0.1', 4002, clientId=2)
+    ib.connect(IB_HOST, IB_PORT, clientId=2)
     ib.reqMarketDataType(3)  # Use delayed data
 
     contract = Stock('AAPL', 'SMART', 'USD')
@@ -119,24 +270,11 @@ def execute_swing_trade():
 
 @app.get("/swing_trade")
 async def swing_trade_endpoint():
+    if USE_MOCK:
+        return JSONResponse(MockIBKRService.get_mock_swing_trade())
     result = await run_in_threadpool(execute_swing_trade)
     return JSONResponse(result)
 
-@app.get("/graph_results")
-async def graph_results():
-    # Example graphing logic
-    data = {
-        "dates": [datetime.now()],
-        "prices": [150]  # Example data
-    }
-
-    plt.plot(data["dates"], data["prices"], marker='o')
-    plt.title("Swing Trade Results")
-    plt.xlabel("Date")
-    plt.ylabel("Price")
-    plt.savefig("swing_trade_results.png")
-
-    return JSONResponse({"message": "Graph saved as swing_trade_results.png"})
 
 def get_account_balance():
     try:
@@ -145,7 +283,7 @@ def get_account_balance():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     ib = IB()
-    ib.connect('127.0.0.1', 4002, clientId=3)
+    ib.connect(IB_HOST, IB_PORT, clientId=3)
     account_summary = ib.accountSummary()
     ib.disconnect()
 
@@ -154,6 +292,8 @@ def get_account_balance():
 
 @app.get("/account_balance")
 async def account_balance_endpoint():
+    if USE_MOCK:
+        return JSONResponse(MockIBKRService.get_mock_account_balance())
     result = await run_in_threadpool(get_account_balance)
     return JSONResponse(result)
 
