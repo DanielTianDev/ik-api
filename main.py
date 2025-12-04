@@ -11,7 +11,8 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 from mock_data import MockIBKRService
 from services.IKBRClient import IBKRClient
-
+from historical_json import router as historical_json_router
+from backtest import router as backtest_router
 
 
 IB_PORT = 4002  # 4001 for live trading, 4002 for paper trading
@@ -29,6 +30,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(historical_json_router, prefix="/json", tags=["Historical JSON"])
+app.include_router(backtest_router, prefix="/backtest", tags=["Backtesting"])
 
 def get_ibkr_data():
     price = ib_client.get_realtime_price('MSFT')
